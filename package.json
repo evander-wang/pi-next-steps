@@ -1,6 +1,6 @@
 {
   "name": "pi-next-steps",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pi extension: propose up to 3 next-step candidates after every turn, fill one into the editor, or hand any 1-N of them to a fresh agent in a new pane.",
   "license": "GPL-3.0-only",
   "keywords": [

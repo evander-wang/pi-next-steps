@@ -466,6 +466,152 @@ describe("派发互斥", () => {
   });
 });
 
+// ---------------------------------------------------------------- ask 编排
+
+describe("ask（选择器 → 结果处理）", () => {
+  type Askable = { ask(ctx: unknown, mode?: string): Promise<void> };
+  type Seedable = { candidates: string[]; model: unknown };
+
+  const MODEL = { provider: "cheap", id: "flash" };
+
+  /** 直接塞候选和模型，跳过真实的生成调用。 */
+  function seeded(pi: ReturnType<typeof fakePi>["pi"], candidates: string[]) {
+    const steps = new NextSteps(pi);
+    const raw = steps as unknown as Seedable;
+    raw.candidates = [...candidates];
+    raw.model = MODEL;
+    return { steps, ask: () => (steps as unknown as Askable).ask };
+  }
+
+  /** 假 ctx：custom 返回预设结果，其余只记录调用。 */
+  function makeCtx(opts: {
+    pick?: unknown;
+    editorText?: string;
+    confirm?: boolean;
+    hasUI?: boolean;
+  }) {
+    const got = { editorText: [] as string[], widgets: [] as (string | undefined)[], notices: [] as string[] };
+    const ctx = {
+      hasUI: opts.hasUI ?? true,
+      mode: "tui",
+      sessionManager: {
+        getCwd: () => "/p",
+        getSessionFile: () => undefined,
+        getSessionId: () => "s1",
+        getBranch: () => [], // 没有上文 → lastAssistantTail 返回 null
+      },
+      ui: {
+        theme: { fg: (_c: string, text: string) => text },
+        getEditorText: () => opts.editorText ?? "",
+        setEditorText: (text: string) => got.editorText.push(text),
+        setWidget: (_key: string, content?: unknown) =>
+          got.widgets.push(content as string | undefined),
+        custom: async () => opts.pick,
+        notify: (message: string) => got.notices.push(message),
+        select: async () => undefined,
+        confirm: async () => opts.confirm ?? true,
+      },
+    } as never;
+    return { ctx, got };
+  }
+
+  test("回车：拼成多行填进编辑器，候选清空", async () => {
+    const { pi } = fakePi({});
+    const { steps } = seeded(pi, ["A", "B"]);
+    const { ctx, got } = makeCtx({ pick: { picked: ["A", "B"], mode: "edit" } });
+
+    await (steps as unknown as Askable).ask(ctx);
+
+    expect(got.editorText).toEqual(["A\nB"]);
+    expect((steps as unknown as Seedable).candidates).toEqual([]);
+  });
+
+  test("Esc：不填编辑器，候选保留并重画 widget", async () => {
+    const { pi } = fakePi({});
+    const { steps } = seeded(pi, ["A"]);
+    const { ctx, got } = makeCtx({ pick: undefined });
+
+    await (steps as unknown as Askable).ask(ctx);
+
+    expect(got.editorText).toEqual([]);
+    expect((steps as unknown as Seedable).candidates).toEqual(["A"]);
+    // widget 内容是多行数组：拼起来看里面确实有常驻列表（带模型名）和候选
+    const widget = (got.widgets.at(-1) as unknown as string[] | undefined)?.join("\n") ?? "";
+    expect(widget).toContain("cheap/flash");
+    expect(widget).toContain("A");
+  });
+
+  test("派发成功：只把派出去的那条从候选里去掉，剩下的重画", async () => {
+    process.env.TMUX = "/tmp/fake-tmux";
+    const { pi } = fakePi({ tmux: { stdout: "" } });
+    const { steps } = seeded(pi, ["A", "B"]);
+    const { ctx, got } = makeCtx({ pick: { picked: ["A"], mode: "pane" } });
+
+    await (steps as unknown as Askable).ask(ctx);
+
+    expect(got.editorText).toEqual([]);
+    expect((steps as unknown as Seedable).candidates).toEqual(["B"]);
+    delete process.env.TMUX;
+  });
+
+  test("派发失败：候选一条都不删", async () => {
+    process.env.TMUX = "/tmp/fake-tmux";
+    const { pi } = fakePi({ tmux: { stdout: "" } });
+    const { steps } = seeded(pi, ["A", "B"]);
+    const { ctx } = makeCtx({ pick: { picked: ["A"], mode: "pane" }, confirm: false });
+
+    await (steps as unknown as Askable).ask(ctx);
+
+    expect((steps as unknown as Seedable).candidates).toEqual(["A", "B"]);
+    delete process.env.TMUX;
+  });
+
+  test("全部派出去后候选和 widget 都收掉", async () => {
+    process.env.TMUX = "/tmp/fake-tmux";
+    const { pi } = fakePi({ tmux: { stdout: "" } });
+    const { steps } = seeded(pi, ["A"]);
+    const { ctx, got } = makeCtx({ pick: { picked: ["A"], mode: "pane" } });
+
+    await (steps as unknown as Askable).ask(ctx);
+
+    expect((steps as unknown as Seedable).candidates).toEqual([]);
+    expect(got.widgets.at(-1)).toBeUndefined(); // hideWidget
+    delete process.env.TMUX;
+  });
+
+  test("已经有人在输入框里打字：不弹选择器", async () => {
+    const { pi } = fakePi({});
+    const { steps } = seeded(pi, ["A"]);
+    const { ctx, got } = makeCtx({ pick: { picked: ["A"], mode: "edit" }, editorText: "打字中" });
+
+    await (steps as unknown as Askable).ask(ctx);
+
+    expect(got.editorText).toEqual([]);
+    expect((steps as unknown as Seedable).candidates).toEqual(["A"]);
+  });
+
+  test("没有 UI 直接返回", async () => {
+    const { pi } = fakePi({});
+    const { steps } = seeded(pi, ["A"]);
+    const { ctx, got } = makeCtx({ pick: { picked: ["A"], mode: "edit" }, hasUI: false });
+
+    await (steps as unknown as Askable).ask(ctx);
+
+    expect(got.editorText).toEqual([]);
+  });
+
+  test("选中「重新生成」但拿不到上文：安全返回，不炸", async () => {
+    const { pi } = fakePi({});
+    const { steps } = seeded(pi, ["A"]);
+    const { ctx, got } = makeCtx({ pick: { picked: ["↻ 重新生成"], mode: "edit" } });
+
+    await (steps as unknown as Askable).ask(ctx);
+
+    expect(got.editorText).toEqual([]);
+    expect((steps as unknown as Seedable).candidates).toEqual(["A"]);
+  });
+});
+
 // ---------------------------------------------------------------- 临时目录清理
 
 describe("pruneHandoffs", () => {

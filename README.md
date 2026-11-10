@@ -69,6 +69,19 @@ pi update --extensions
 - git 包按 ref 钉住：改了代码必须 push，光在本地改没用
 - 只改文档也要 push 才会到加载副本，但不影响功能，可以攒着一起推
 
+### 版本与 CHANGELOG 规则
+
+Pi 靠 `package.json` 的 `version` **递增**来决定是否展示 `CHANGELOG.md` 里的新条目，
+所以两者必须一起改：
+
+| 改动 | 怎么做 |
+| --- | --- |
+| 用户可见的新功能 / 行为变化 | `minor` + CHANGELOG 加 `## [x.y.0] - 日期` 段 |
+| 只修 bug | `patch` + CHANGELOG 加条目 |
+| 只改文档 / CI / 测试 | 不动版本；确实想发一版再 `patch` |
+
+版本不变时 `pi update --extensions` 仍会把内容同步过去，只是不会给你看变更说明。
+
 ## 日常用法
 
 每轮答完后弹出多选列表：
