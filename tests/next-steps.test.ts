@@ -20,6 +20,8 @@ import {
   focusSpawn,
   labelOf,
   MAX_HANDOFFS,
+  NextSteps,
+  paneEntryLabel,
   pruneHandoffs,
   paneLink,
   piArgs,
@@ -378,6 +380,89 @@ describe("labelOf / asQuote", () => {
     expect(asQuote('/tmp/a b.sh')).toBe('"/tmp/a b.sh"');
     expect(asQuote('a"b')).toBe('"a\\"b"');
     expect(asQuote("a\\b")).toBe('"a\\\\b"');
+  });
+});
+
+// ---------------------------------------------------------------- 派发编排
+
+describe("paneEntryLabel", () => {
+  const rec = (over: Partial<Record<string, unknown>> = {}) =>
+    ({ provider: "otty", handle: "p_1", title: "next: 修测试", items: ["a"], ...over }) as never;
+
+  test("带上序号、provider、窗格 id 和标题", () => {
+    expect(paneEntryLabel(rec(), 1)).toBe("1. otty · p_1 · next: 修测试");
+  });
+
+  test("超长标题截断到 48 字内", () => {
+    const long = "x".repeat(200);
+    const label = paneEntryLabel(rec({ title: long }), 2);
+    expect(label.startsWith("2. otty · p_1 · ")).toBe(true);
+    expect(label.length).toBeLessThan(70);
+    expect(label).toContain("\u2026");
+  });
+});
+
+describe("派发互斥", () => {
+  /** 把 confirm 卡住，模拟「select / confirm 那段几秒的窗口期」。 */
+  function stuckCtx(notices: string[]) {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const ctx = {
+      hasUI: true,
+      mode: "tui",
+      sessionManager: { getCwd: () => "/p", getSessionFile: () => undefined },
+      ui: {
+        getEditorText: () => "",
+        notify: (message: string) => notices.push(message),
+        select: async () => undefined,
+        confirm: async () => {
+          await gate;
+          return false;
+        },
+      },
+    } as never;
+    return { ctx, release: () => release() };
+  }
+
+  test("第一次还没结束时，第二次直接被拒掉", async () => {
+    process.env.TMUX = "/tmp/fake-tmux";   // 让 probeTmux 直接给出目标，不 exec
+    const notices: string[] = [];
+    const { ctx, release } = stuckCtx(notices);
+    const steps = new NextSteps(fakePi({}).pi);
+    const dispatch = steps as unknown as {
+      dispatchToPane(c: unknown, items: string[]): Promise<boolean>;
+    };
+
+    const first = dispatch.dispatchToPane(ctx, ["a"]);
+    await new Promise((r) => setTimeout(r, 10));      // 让它进入 confirm 并卡住
+    expect(await dispatch.dispatchToPane(ctx, ["b"])).toBe(false);
+    expect(notices.some((m) => m.includes("上一次派发还在进行"))).toBe(true);
+
+    release();
+    expect(await first).toBe(false);                   // confirm 返回 false，没派发
+    delete process.env.TMUX;
+  });
+
+  test("上一次结束后又能派发了", async () => {
+    process.env.TMUX = "/tmp/fake-tmux";
+    const notices: string[] = [];
+    const { ctx, release } = stuckCtx(notices);
+    const steps = new NextSteps(fakePi({}).pi);
+    const dispatch = steps as unknown as {
+      dispatchToPane(c: unknown, items: string[]): Promise<boolean>;
+    };
+
+    const first = dispatch.dispatchToPane(ctx, ["a"]);
+    release();
+    await first;
+    notices.length = 0;
+
+    const second = dispatch.dispatchToPane(ctx, ["b"]);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(notices.some((m) => m.includes("上一次派发还在进行"))).toBe(false);
+    release();
+    await second;
+    delete process.env.TMUX;
   });
 });
 

@@ -481,6 +481,11 @@ export interface SpawnRecord {
   items: string[];
 }
 
+/** `/next panes` 里每一项的文案：序号 · provider · handle · 标题。 */
+export function paneEntryLabel(record: SpawnRecord, index: number): string {
+  return `${index}. ${record.provider} · ${record.handle} · ${clip(record.title, 48)}`;
+}
+
 /** 取 otty 的 pane deeplink；拿不到就是 undefined，不影响主流程。 */
 export async function paneLink(
   pi: ExtensionAPI,
@@ -900,7 +905,7 @@ export class MultiSelectDialog implements Component {
 
 // ---------------------------------------------------------------- 主体
 
-class NextSteps {
+export class NextSteps {
   private candidates: string[] = [];
   private abort: AbortController | null = null;
   private generationId = 0;
@@ -912,6 +917,8 @@ class NextSteps {
   private model: AnyModel | undefined;
   /** 最近的落地记录，供 `/next focus` 跳回去。 */
   private recent: SpawnRecord[] = [];
+  /** 派发进行中：防止 select / confirm 那段窗口期里重复触发。 */
+  private dispatching = false;
 
   constructor(private readonly pi: ExtensionAPI) {}
 
@@ -1082,12 +1089,30 @@ class NextSteps {
   }
 
   /**
-   * 勾选集 → 一个独立窗格：手动选终端，写 handoff + runner，再拉起来。
+   * 勾选集 → 一个独立窗格。
    *
    * 只有 p / `/next pane` 能走到这里；Enter 永远只是填输入框。
-   * 返回 true 表示真的拉起来了，调用方据此把这几条从候选里移除。
+   * 同时只允许一个派发在飞：从按 p 到窗格拉起来中间有 select/confirm/写盘几秒，
+   * 这期间再触发就直接拒掉，不去猜用户到底想开几个。
    */
   private async dispatchToPane(
+    ctx: ExtensionContext,
+    items: string[],
+  ): Promise<boolean> {
+    if (this.dispatching) {
+      ctx.ui.notify("next-steps: 上一次派发还在进行，稍等一下", "warning");
+      return false;
+    }
+    this.dispatching = true;
+    try {
+      return await this.runDispatch(ctx, items);
+    } finally {
+      this.dispatching = false;
+    }
+  }
+
+  /** 派发主体：探测 → 选终端 → 确认 → 写盘 → 拉起 → 记录。 */
+  private async runDispatch(
     ctx: ExtensionContext,
     items: string[],
   ): Promise<boolean> {
@@ -1210,6 +1235,23 @@ class NextSteps {
     return { targets, reasons };
   }
 
+  /**
+   * `/next panes`：列出这个会话派发过的窗格，选中即跳过去。
+   *
+   * 比“只能靠 /next focus 1/2/3 盲猜”多给出 provider、窗格 id 和当初的标题。
+   */
+  async listRecent(ctx: ExtensionContext): Promise<void> {
+    if (this.recent.length === 0) {
+      ctx.ui.notify("next-steps: 这个会话还没派发过任务", "warning");
+      return;
+    }
+    const labels = this.recent.map((record, index) => paneEntryLabel(record, index + 1));
+    const choice = await ctx.ui.select("已派发的窗格（选中即跳转）", labels);
+    if (choice === undefined) return;
+    const index = labels.indexOf(choice) + 1;
+    if (index > 0) await this.focusRecent(ctx, index);
+  }
+
   /** `/next focus [n]`：把第 n 个最近派发的窗格拉到眼前。 */
   async focusRecent(ctx: ExtensionContext, index: number): Promise<void> {
     const record = this.recent[index - 1];
@@ -1317,7 +1359,7 @@ export default function (pi: ExtensionAPI): void {
 
   pi.registerCommand("next", {
     description:
-      "下一步候选：空格多选，Enter 填入输入框（不发送），p 选终端后在新窗格独立执行；/next pane 以开窗格为默认，/next focus [n] 跳到最近派发的窗格，/next on|off 开关自动建议",
+      "下一步候选：空格多选，Enter 填入输入框（不发送），p 选终端后在新窗格独立执行；/next pane 以开窗格为默认，/next panes 列出已派发的窗格，/next focus [n] 跳到第 n 个，/next on|off 开关自动建议",
     handler: async (args, ctx) => {
       const [arg, extra] = (args ?? "").trim().toLowerCase().split(/\s+/);
       if (arg === "off") {
@@ -1338,6 +1380,10 @@ export default function (pi: ExtensionAPI): void {
           ctx,
           Number.isFinite(index) && index > 0 ? index : 1,
         );
+        return;
+      }
+      if (arg === "panes") {
+        await nextSteps.listRecent(ctx);
         return;
       }
       await nextSteps.showPicker(ctx);
