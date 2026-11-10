@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -89,6 +89,9 @@ export const GHOSTTY_APP =
 
 /** 派生会话 handoff 与 runner 脚本的落盘目录。 */
 export const HANDOFF_DIR = join(tmpdir(), "pi-next-handoff");
+
+/** 临时目录里保留最近多少次派发的文件，更早的在下一次派发时清掉。 */
+export const MAX_HANDOFFS = 20;
 
 /** 锚点 pane 达到这个列数才适合左右分屏，否则上下分。 */
 const WIDE_PANE_COLS = 120;
@@ -325,6 +328,46 @@ export async function writeRunner(
   await writeFile(script, body, "utf8");
   await chmod(script, 0o755);
   return script;
+}
+
+/**
+ * 清理临时目录：只留最近 `keep` 次派发的文件。
+ *
+ * 每次派发写一对 `.md` + `.sh`，不清就会一直堆。文件名以 ISO 时间戳开头，
+ * 字典序等于时间序，所以按 basename 排序取尾部即可。
+ *
+ * 返回删掉的文件数；读不到目录（没派发过）就当 0，永远不抛。
+ */
+export async function pruneHandoffs(
+  keep = MAX_HANDOFFS,
+  dir = HANDOFF_DIR,
+): Promise<number> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return 0;
+  }
+
+  const entries = names
+    .filter((name) => /\.(md|sh|log)$/.test(name))
+    .map((name) => ({ name, base: name.replace(/\.(md|sh|log)$/, "") }));
+
+  const bases = [...new Set(entries.map((entry) => entry.base))].sort();
+  const doomed = new Set(bases.slice(0, Math.max(0, bases.length - keep)));
+  if (doomed.size === 0) return 0;
+
+  let removed = 0;
+  for (const entry of entries) {
+    if (!doomed.has(entry.base)) continue;
+    try {
+      await rm(join(dir, entry.name), { force: true });
+      removed += 1;
+    } catch {
+      // 单个文件删不掉不影响其它，也不该让派发失败
+    }
+  }
+  return removed;
 }
 
 // ---------------------------------------------------------------- 各终端探针
@@ -1105,6 +1148,9 @@ class NextSteps {
       );
       return false;
     }
+
+    // 只留最近 MAX_HANDOFFS 次派发的文件；清理失败绝不能影响派发本身。
+    await pruneHandoffs().catch(() => {});
 
     const outcome = await spawnVia(this.pi, target, cwd, script, title);
     if (!outcome.ok) {

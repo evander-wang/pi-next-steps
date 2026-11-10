@@ -95,6 +95,7 @@ pi update --extensions
 ## 派发到底做了什么
 
 1. 勾选的 1~N 条写进 handoff 文件：`$TMPDIR/pi-next-handoff/<时间戳>-<pid>.md`
+   （每次派发写一对 `.md` + `.sh`，目录里只保留最近 20 次，更早的在下次派发时清掉）
 2. 旁边生成一个 runner 脚本，内容是
    `exec <pi 绝对路径> --fork <session.jsonl> @<handoff.md>`
    —— 所以新会话有完整历史，但 session 是独立的

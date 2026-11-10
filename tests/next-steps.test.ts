@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readFile, rm, stat } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   GHOSTTY_APP,
@@ -19,6 +19,8 @@ import {
   asQuote,
   focusSpawn,
   labelOf,
+  MAX_HANDOFFS,
+  pruneHandoffs,
   paneLink,
   piArgs,
   resolvePiBin,
@@ -376,6 +378,56 @@ describe("labelOf / asQuote", () => {
     expect(asQuote('/tmp/a b.sh')).toBe('"/tmp/a b.sh"');
     expect(asQuote('a"b')).toBe('"a\\"b"');
     expect(asQuote("a\\b")).toBe('"a\\\\b"');
+  });
+});
+
+// ---------------------------------------------------------------- 临时目录清理
+
+describe("pruneHandoffs", () => {
+  /** 造 n 次派发对应的文件对（.md + .sh）。 */
+  async function seed(dir: string, n: number): Promise<string[]> {
+    const bases: string[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const base = `2026-11-10T00-00-${String(i).padStart(2, "0")}-000Z-1000`;
+      await writeFile(join(dir, `${base}.md`), "x", "utf8");
+      await writeFile(join(dir, `${base}.sh`), "x", "utf8");
+      bases.push(base);
+    }
+    return bases;
+  }
+
+  const tmp = () => mkdtemp(join(tmpdir(), "ns-prune-"));
+
+  test("超过 keep 时只留最新的，最老的连 .md/.sh 一起删", async () => {
+    const dir = await tmp();
+    const bases = await seed(dir, 25);
+    expect(await pruneHandoffs(20, dir)).toBe(10); // 5 次 × 2 个文件
+    const left = (await readdir(dir)).sort();
+    expect(left).toHaveLength(40);
+    expect(left[0]).toBe(`${bases[5]}.md`);
+    expect(left).not.toContain(`${bases[4]}.md`);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("没超过 keep 就一个都不删", async () => {
+    const dir = await tmp();
+    await seed(dir, MAX_HANDOFFS);
+    expect(await pruneHandoffs(MAX_HANDOFFS, dir)).toBe(0);
+    expect(await readdir(dir)).toHaveLength(MAX_HANDOFFS * 2);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("目录不存在时返回 0，不抛", async () => {
+    expect(await pruneHandoffs(20, "/tmp/definitely-not-a-dir-ns")).toBe(0);
+  });
+
+  test("无关文件不碰", async () => {
+    const dir = await tmp();
+    await seed(dir, 22);
+    await writeFile(join(dir, "notes.txt"), "keep me", "utf8");
+    await pruneHandoffs(2, dir);
+    expect(await readFile(join(dir, "notes.txt"), "utf8")).toBe("keep me");
+    await rm(dir, { recursive: true, force: true });
   });
 });
 
