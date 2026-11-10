@@ -324,13 +324,15 @@ describe("handoff 与 runner", () => {
 
   test("PI_BIN 只有空白时按未设置处理，回落到托管 bin", () => {
     const managed = join(homedir(), ".pi", "agent", "bin", "pi");
+    // 回落后可能是托管路径，也可能（没有托管 pi 的环境，如 CI）退化成 PATH 查找的 "pi"
+    const isPi = (bin: string) => bin === "pi" || bin.endsWith("/pi");
     withPiBin("   ", () => {
       const bin = resolvePiBin();
-      expect(bin).not.toBe("   ");
-      expect(bin).toMatch(/\/pi$/);
+      expect(bin.trim()).not.toBe("");
+      expect(isPi(bin)).toBe(true);
     });
     withPiBin("", () => {
-      expect(resolvePiBin()).toMatch(/\/pi$/);
+      expect(isPi(resolvePiBin())).toBe(true);
     });
     if (existsSync(managed)) {
       withPiBin("  \t ", () => {
