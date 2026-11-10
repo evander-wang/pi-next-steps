@@ -1,0 +1,21 @@
+{
+  "name": "pi-next-steps",
+  "version": "0.1.0",
+  "description": "Pi extension: propose up to 3 next-step candidates after every turn, fill one into the editor, or hand any 1-N of them to a fresh agent in a new pane.",
+  "keywords": ["pi-package", "pi-extension"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./extensions/next-steps.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "scripts": {
+    "test": "cd tests && bun test"
+  }
+}
