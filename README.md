@@ -11,7 +11,7 @@ explicit keypress.
 ## Install
 
 ```bash
-pi install git:github.com/<you>/pi-next-steps
+pi install git:github.com/evander-wang/pi-next-steps
 ```
 
 Then `/reload` (or restart pi).
@@ -102,3 +102,7 @@ real implementation inside the current Pi install (resolved through
 `PI_MANAGED_INSTALL_ROOT` or `~/.pi/agent/install/current-version`), because the
 extension directory has no `node_modules` of its own. Without a local Pi install
 these tests cannot resolve their imports.
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE).
