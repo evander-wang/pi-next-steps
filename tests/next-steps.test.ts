@@ -308,7 +308,9 @@ describe("handoff 与 runner", () => {
       expect(resolvePiBin()).toBe("/opt/x/pi");
     });
     withPiBin(undefined, () => {
-      expect(resolvePiBin()).toMatch(/\/pi$/);
+      // 本机有托管 pi 时是绝对路径，没有（例如 CI）就退化成 PATH 查找的 "pi"
+      const bin = resolvePiBin();
+      expect(bin === "pi" || bin.endsWith("/pi")).toBe(true);
     });
   });
 

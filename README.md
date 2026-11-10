@@ -133,7 +133,7 @@ pi update --extensions
 | Ghostty 报 `-1743` | 系统设置 → 隐私与安全性 → 自动化，允许宿主终端控制 Ghostty |
 | `/next` 出现两次 | 有第二份同扩展在加载（旧文件或另一个包） |
 | 提示说「任务清单已交给它」但窗格里没东西 | 本扩展**不做就绪探测**；失败原因由 runner 直接打在那个窗格里 |
-| `bun test` 解析不到 `@earendil-works/pi-tui` | 两个可能：① 在 `tests/` 里跑的（要在仓库根跑）；② 本机没有 pi 安装 |
+| `bun test` 解析不到 `@earendil-works/pi-tui` | 三个可能：① 在 `tests/` 里跑的（要在仓库根跑）；② 没 `bun install`；③ 没 bun install 也没本机 pi 安装 |
 
 ## 开发
 
@@ -144,24 +144,35 @@ pi update --extensions
 │   ├── next-steps.test.ts       # 40 个用例
 │   └── setup.ts                 # bun preload：把 @earendil-works/pi-tui 指向本机 pi 安装
 ├── bunfig.toml                  # 挂 preload（必须在仓库根）
+├── tsconfig.json                # tsc --noEmit 的配置
 ├── package.json                 # peerDependencies 声明宿主提供的 pi 包
 ├── CHANGELOG.md
 └── LICENSE
 ```
 
-跑测试（**在仓库根执行**）：
+先装依赖，再跑检查：
 
 ```bash
-bun test
+bun install          # 只为类型检查和测试装 devDependencies
+bun run typecheck    # tsc --noEmit
+bun test             # 40 个用例
+bun run check        # 上面两步一起
 ```
+
+CI（`.github/workflows/ci.yml`）跑的就是 `typecheck` + `test`，每次 push 到 `main`
+或开 PR 都会执行。
 
 `bunfig.toml` 放在仓库根，preload 指向 `tests/setup.ts`。在 `tests/` 目录里直接
 `bun test` 拿不到这份 preload，会报解析不到 `@earendil-works/pi-tui`。
 
-`tests/setup.ts` 通过 `PI_MANAGED_INSTALL_ROOT` 或
-`~/.pi/agent/install/current-version` 找到当前 pi 的安装目录，再把
-`@earendil-works/pi-tui` 映射到里面的真实实现 —— 扩展目录自身没有 `node_modules`。
-所以**全新 clone 也能跑，但必须先有本地 pi 安装**。
+`tests/setup.ts` 把 `@earendil-works/pi-tui` 映射到真实实现，按顺序找：
+
+1. 仓库自己的 `node_modules`（`bun install` 装过 devDependencies —— CI 走这条）
+2. 本机 pi 安装里的副本（走 `PI_MANAGED_INSTALL_ROOT` 或
+   `~/.pi/agent/install/current-version`）
+
+两条都不通就报错，不会静默用假实现。所以全新 clone 只要 `bun install` 就能跑，
+不需要本机装 pi。
 
 改了扩展想立刻验证，不要装包，直接隔离加载：
 
