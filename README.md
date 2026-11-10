@@ -133,7 +133,7 @@ pi update --extensions
 | Ghostty 报 `-1743` | 系统设置 → 隐私与安全性 → 自动化，允许宿主终端控制 Ghostty |
 | `/next` 出现两次 | 有第二份同扩展在加载（旧文件或另一个包） |
 | 提示说「任务清单已交给它」但窗格里没东西 | 本扩展**不做就绪探测**；失败原因由 runner 直接打在那个窗格里 |
-| `bun test` 解析不到 `@earendil-works/pi-tui` | 测试靠本机 pi 安装提供该依赖，没有本地 pi 就跑不了 |
+| `bun test` 解析不到 `@earendil-works/pi-tui` | 两个可能：① 在 `tests/` 里跑的（要在仓库根跑）；② 本机没有 pi 安装 |
 
 ## 开发
 
@@ -142,18 +142,21 @@ pi update --extensions
 ├── extensions/next-steps.ts     # 扩展本体
 ├── tests/
 │   ├── next-steps.test.ts       # 40 个用例
-│   ├── setup.ts                 # bun preload：把 @earendil-works/pi-tui 指向本机 pi 安装
-│   └── bunfig.toml              # 挂 preload
+│   └── setup.ts                 # bun preload：把 @earendil-works/pi-tui 指向本机 pi 安装
+├── bunfig.toml                  # 挂 preload（必须在仓库根）
 ├── package.json                 # peerDependencies 声明宿主提供的 pi 包
 ├── CHANGELOG.md
 └── LICENSE
 ```
 
-跑测试：
+跑测试（**在仓库根执行**）：
 
 ```bash
-cd tests && bun test        # 或仓库根执行 bun test 的 script: bun run test
+bun test
 ```
+
+`bunfig.toml` 放在仓库根，preload 指向 `tests/setup.ts`。在 `tests/` 目录里直接
+`bun test` 拿不到这份 preload，会报解析不到 `@earendil-works/pi-tui`。
 
 `tests/setup.ts` 通过 `PI_MANAGED_INSTALL_ROOT` 或
 `~/.pi/agent/install/current-version` 找到当前 pi 的安装目录，再把
